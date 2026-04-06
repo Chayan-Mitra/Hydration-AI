@@ -16,9 +16,15 @@ class VisionSystem:
 
         self.cap = cv2.VideoCapture(0)
 
+        # detection state
         self.hold_start = None
         self.prev_hand = None
         self.stable_frames = 0
+
+        # PERFORMANCE CONTROL
+        self.frame_count = 0
+        self.yolo_interval = 5   # run YOLO every 5 frames
+        self.bottle_detected = False
 
     def start_camera(self):
         if not self.cap.isOpened():
@@ -37,33 +43,50 @@ class VisionSystem:
         if not ret:
             return False, None
 
+        self.frame_count += 1
         h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         mouth = None
         hand = None
 
-        # ---- YOLO (lightweight) ----
-        results = self.model(frame, imgsz=320, conf=0.3, verbose=False)
+        # -------- YOLO (RUN LESS OFTEN) --------
+        if self.frame_count % self.yolo_interval == 0:
+            results = self.model(frame, imgsz=320, conf=0.3, verbose=False)
 
-        for r in results:
-            for box in r.boxes:
-                cls = int(box.cls[0])
-                label = self.model.names[cls]
+            self.bottle_detected = False
 
-                if label in ["bottle", "cup"]:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+            for r in results:
+                for box in r.boxes:
+                    cls = int(box.cls[0])
+                    label = self.model.names[cls]
 
-        # ---- FACE ----
+                    if label in ["bottle", "cup"]:
+                        self.bottle_detected = True
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+
+        # -------- FACE (WITH HEAD TILT) --------
+        tilt_detected = False
         face_res = self.face_mesh.process(rgb)
         if face_res.multi_face_landmarks:
             for lm in face_res.multi_face_landmarks:
-                p = lm.landmark[13]
-                mouth = (int(p.x * w), int(p.y * h))
+                nose = lm.landmark[1]
+                chin = lm.landmark[152]
+
+                nose_y = int(nose.y * h)
+                chin_y = int(chin.y * h)
+
+                # head tilt when chin goes up relative to nose
+                if chin_y - nose_y < 40:
+                    tilt_detected = True
+
+                mouth_point = lm.landmark[13]
+                mouth = (int(mouth_point.x * w), int(mouth_point.y * h))
+
                 cv2.circle(frame, mouth, 5, (0, 255, 0), -1)
 
-        # ---- HAND ----
+        # -------- HAND --------
         hand_res = self.hands.process(rgb)
         if hand_res.multi_hand_landmarks:
             for lm in hand_res.multi_hand_landmarks:
@@ -71,7 +94,7 @@ class VisionSystem:
                 hand = (int(p.x * w), int(p.y * h))
                 cv2.circle(frame, hand, 5, (255, 0, 0), -1)
 
-        # ---- BALANCED DETECTION ----
+        # -------- DETECTION --------
         if mouth and hand:
             d = self.distance(mouth, hand)
 
@@ -92,10 +115,13 @@ class VisionSystem:
                     self.prev_hand = hand
                     hold_time = time.time() - self.hold_start
 
-                    if hold_time > 0.8 and self.stable_frames > 2:
-                        print("DRINK DETECTED 💧🔥")
+                    # 🔥 FAST + RELIABLE TRIGGER
+                    if hold_time > 0.7 and self.stable_frames > 2 and tilt_detected:
+                        print("DRINK DETECTED 💧⚡")
+
                         self.hold_start = None
                         self.stable_frames = 0
+
                         return True, frame
 
             else:
