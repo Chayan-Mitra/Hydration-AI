@@ -9,8 +9,7 @@ class HydrationLogic:
         self.required_sips = 3
 
         self.status = "WAITING ⏳"
-        self.active = False  # camera OFF initially
-
+        self.active = False 
     def start_cycle(self):
         self.active = True
         self.sip_count = 0

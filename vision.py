@@ -4,6 +4,7 @@ import time
 from ultralytics import YOLO
 import mediapipe as mp
 
+
 class VisionSystem:
     def __init__(self):
         self.model = YOLO("yolov8n.pt")
@@ -20,10 +21,11 @@ class VisionSystem:
         self.hold_start = None
         self.prev_hand = None
         self.stable_frames = 0
+        self.last_sip_time = 0  # 🔥 cooldown
 
-        # PERFORMANCE CONTROL
+        # performance
         self.frame_count = 0
-        self.yolo_interval = 5   # run YOLO every 5 frames
+        self.yolo_interval = 5
         self.bottle_detected = False
 
     def start_camera(self):
@@ -50,10 +52,9 @@ class VisionSystem:
         mouth = None
         hand = None
 
-        # -------- YOLO (RUN LESS OFTEN) --------
+        # -------- YOLO (every few frames) --------
         if self.frame_count % self.yolo_interval == 0:
             results = self.model(frame, imgsz=320, conf=0.3, verbose=False)
-
             self.bottle_detected = False
 
             for r in results:
@@ -66,24 +67,12 @@ class VisionSystem:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
-        # -------- FACE (WITH HEAD TILT) --------
-        tilt_detected = False
+        # -------- FACE --------
         face_res = self.face_mesh.process(rgb)
         if face_res.multi_face_landmarks:
             for lm in face_res.multi_face_landmarks:
-                nose = lm.landmark[1]
-                chin = lm.landmark[152]
-
-                nose_y = int(nose.y * h)
-                chin_y = int(chin.y * h)
-
-                # head tilt when chin goes up relative to nose
-                if chin_y - nose_y < 40:
-                    tilt_detected = True
-
                 mouth_point = lm.landmark[13]
                 mouth = (int(mouth_point.x * w), int(mouth_point.y * h))
-
                 cv2.circle(frame, mouth, 5, (0, 255, 0), -1)
 
         # -------- HAND --------
@@ -94,33 +83,42 @@ class VisionSystem:
                 hand = (int(p.x * w), int(p.y * h))
                 cv2.circle(frame, hand, 5, (255, 0, 0), -1)
 
-        # -------- DETECTION --------
+        # -------- FINAL DETECTION --------
         if mouth and hand:
             d = self.distance(mouth, hand)
 
-            if d < 110:
+            # relaxed condition: hand near mouth OR bottle detected
+            near_mouth = d < 120 or self.bottle_detected
+            current_time = time.time()
+
+            # cooldown (prevents double counting)
+            if current_time - self.last_sip_time < 2.0:
+                return False, frame
+
+            if near_mouth:
                 if self.hold_start is None:
-                    self.hold_start = time.time()
+                    self.hold_start = current_time
                     self.prev_hand = hand
                     self.stable_frames = 0
 
                 else:
                     move_dist = self.distance(hand, self.prev_hand)
 
-                    if move_dist < 25:
+                    if move_dist < 30:
                         self.stable_frames += 1
                     else:
-                        self.stable_frames = 0
+                        self.stable_frames = max(0, self.stable_frames - 1)
 
                     self.prev_hand = hand
-                    hold_time = time.time() - self.hold_start
+                    hold_time = current_time - self.hold_start
 
-                    # 🔥 FAST + RELIABLE TRIGGER
-                    if hold_time > 0.7 and self.stable_frames > 2 and tilt_detected:
-                        print("DRINK DETECTED 💧⚡")
+                    # final trigger (balanced for real life)
+                    if hold_time > 0.7 and self.stable_frames > 1:
+                        print("DRINK DETECTED 💧🔥")
 
                         self.hold_start = None
                         self.stable_frames = 0
+                        self.last_sip_time = current_time
 
                         return True, frame
 
