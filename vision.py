@@ -21,7 +21,7 @@ class VisionSystem:
         self.hold_start = None
         self.prev_hand = None
         self.stable_frames = 0
-        self.last_sip_time = 0  # 🔥 cooldown
+        self.last_sip_time = 0
 
         # performance
         self.frame_count = 0

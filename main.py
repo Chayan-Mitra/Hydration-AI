@@ -2,6 +2,7 @@ import sys
 import time
 import threading
 import cv2
+import pyqtgraph as pg
 
 from PyQt5.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout,
@@ -50,11 +51,11 @@ class HydrationApp(QWidget):
         super().__init__()
 
         self.setWindowTitle("Hydration AI 💧")
-        self.setGeometry(300, 200, 420, 350)
+        self.setGeometry(300, 200, 420, 420)
 
         # -------- TRAY --------
         self.tray = QSystemTrayIcon(self)
-        self.tray.setIcon(QIcon())  # optional: replace with custom icon.png
+        self.tray.setIcon(QIcon())
 
         menu = QMenu()
         show_action = QAction("Show", self)
@@ -123,10 +124,28 @@ class HydrationApp(QWidget):
         self.button = QPushButton("Manual Sip 💧")
         self.button.clicked.connect(self.manual_sip)
 
+        # -------- GRAPH --------
+        self.graph = pg.PlotWidget()
+        self.graph.setBackground('#0f172a')
+        self.graph.setTitle("Hydration Progress", color="w", size="12pt")
+
+        self.graph.showGrid(x=True, y=True)
+        self.graph.setLabel('left', 'Sips')
+        self.graph.setLabel('bottom', 'Time (s)')
+
+        self.graph_curve = self.graph.plot(
+            pen=pg.mkPen(color=(56, 189, 248), width=3),
+            symbol='o',
+            symbolSize=6,
+            symbolBrush=(56, 189, 248)
+        )
+
+        # -------- ADD TO LAYOUT --------
         layout.addWidget(self.status_label)
         layout.addWidget(self.timer_label)
         layout.addWidget(self.sip_label)
         layout.addWidget(self.progress)
+        layout.addWidget(self.graph)
         layout.addWidget(self.button)
 
         self.setLayout(layout)
@@ -134,7 +153,7 @@ class HydrationApp(QWidget):
         # -------- TIMER --------
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_system)
-        self.timer.start(1000)
+        self.timer.start(10000)
 
         # -------- SIGNAL --------
         comm.sip_detected.connect(self.handle_sip)
@@ -148,14 +167,14 @@ class HydrationApp(QWidget):
         self.tray.hide()
         QApplication.quit()
 
-    # -------- SIP HANDLING --------
+    # -------- SIP --------
     def manual_sip(self):
         logic.register_sip()
 
     def handle_sip(self):
         logic.register_sip()
 
-    # -------- VISION LOOP --------
+    # -------- VISION --------
     def vision_loop(self):
         while True:
             if logic.active:
@@ -168,7 +187,6 @@ class HydrationApp(QWidget):
 
                 if detected:
                     comm.sip_detected.emit()
-
             else:
                 vision.stop_camera()
                 time.sleep(1)
@@ -177,7 +195,6 @@ class HydrationApp(QWidget):
     def update_system(self):
         event = logic.update()
 
-        # progress color
         if logic.active:
             self.progress.setStyleSheet(
                 "QProgressBar::chunk { background-color: #22c55e; }"
@@ -187,18 +204,25 @@ class HydrationApp(QWidget):
                 "QProgressBar::chunk { background-color: #64748b; }"
             )
 
-        # 🔔 REMINDER EVENT
         if event == "WAKE":
             speak("Time to drink water")
             show_toast("Hydration Reminder 💧", "Time to drink water!")
 
-        # UI update
         self.status_label.setText(f"Status: {logic.status}")
         self.timer_label.setText(f"Next Reminder: {logic.get_remaining_time()}s")
         self.sip_label.setText(f"Sips: {logic.sip_count}")
         self.progress.setValue(logic.sip_count)
 
-    # -------- CLOSE → TRAY --------
+        # -------- GRAPH UPDATE --------
+        if logic.history:
+            t0 = logic.history[0][0]
+            times = [t - t0 for t, _ in logic.history]
+            sips = [s for _, s in logic.history]
+
+            self.graph_curve.setData(times, sips)
+            self.graph.enableAutoRange()
+
+    # -------- CLOSE --------
     def closeEvent(self, event):
         event.ignore()
         self.hide()

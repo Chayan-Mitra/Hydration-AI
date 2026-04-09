@@ -9,7 +9,10 @@ class HydrationLogic:
         self.required_sips = 3
 
         self.status = "WAITING ⏳"
-        self.active = False 
+        self.active = False
+
+        self.history = []  # 🔥 for graph
+
     def start_cycle(self):
         self.active = True
         self.sip_count = 0
@@ -20,6 +23,9 @@ class HydrationLogic:
             return
 
         self.sip_count += 1
+
+        # 🔥 store data for graph
+        self.history.append((time.time(), self.sip_count))
 
         if self.sip_count >= self.required_sips:
             self.active = False
