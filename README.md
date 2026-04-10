@@ -59,3 +59,4 @@ This isn’t just a reminder — it’s a **behavior-aware hydration system**.
 ```bash
 git clone https://github.com/your-username/Hydration-AI.git
 cd Hydration-AI
+python main.py
